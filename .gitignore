@@ -1,0 +1,41 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-error.log*
+
+# Logs
+logs/
+*.log
+
+# Temp / generated
+tmp/
+bot/tmp/
+*.tmp
+
+# Docker
+docker/reverse-proxy/data/
+docker/reverse-proxy/config/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Test artifacts
+coverage/
+
+generate_history.ps1

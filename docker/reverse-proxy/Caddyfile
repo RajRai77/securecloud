@@ -1,0 +1,27 @@
+# SecureCloud reverse proxy (Caddy)
+#
+# Local development: replace {$NEXTCLOUD_DOMAIN} below with localhost and
+# Caddy will serve plain HTTP. For a public deployment, set NEXTCLOUD_DOMAIN
+# to your real domain (e.g. cloud.example.com) and Caddy will automatically
+# provision a Let's Encrypt certificate — no manual cert management needed.
+
+{$NEXTCLOUD_DOMAIN:localhost} {
+	encode gzip
+
+	# Nextcloud well-known redirects (CalDAV/CardDAV discovery)
+	redir /.well-known/carddav /remote.php/dav 301
+	redir /.well-known/caldav /remote.php/dav 301
+
+	# WhatsApp webhook is routed to the bot service
+	reverse_proxy /webhook* securecloud-bot:3000
+
+	# Everything else goes to Nextcloud
+	reverse_proxy nextcloud:80
+
+	header {
+		Strict-Transport-Security "max-age=15552000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "no-referrer"
+	}
+}

@@ -1,0 +1,143 @@
+# SecureCloud — Docker Compose orchestration
+# Services: mariadb, redis, nextcloud, securecloud-bot, caddy (reverse proxy)
+
+version: "3.9"
+
+networks:
+  securecloud-net:
+    driver: bridge
+
+volumes:
+  nextcloud_html:
+  nextcloud_data:
+  mariadb_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  bot_tmp:
+
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: securecloud-mariadb
+    restart: unless-stopped
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    environment:
+      MYSQL_DATABASE: ${NEXTCLOUD_DB_NAME}
+      MYSQL_USER: ${NEXTCLOUD_DB_USER}
+      MYSQL_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${NEXTCLOUD_DB_ROOT_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - securecloud-net
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: securecloud-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --save 60 1
+    volumes:
+      - redis_data:/data
+    networks:
+      - securecloud-net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  nextcloud:
+    image: nextcloud:29-apache
+    container_name: securecloud-nextcloud
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      MYSQL_DATABASE: ${NEXTCLOUD_DB_NAME}
+      MYSQL_USER: ${NEXTCLOUD_DB_USER}
+      MYSQL_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      MYSQL_HOST: mariadb
+      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER}
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_DOMAIN}
+      REDIS_HOST: redis
+      REDIS_HOST_PASSWORD: ${REDIS_PASSWORD}
+      OVERWRITEPROTOCOL: ${NEXTCLOUD_OVERWRITE_PROTOCOL:-http}
+      OVERWRITECLIURL: ${NEXTCLOUD_OVERWRITE_CLI_URL:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+    volumes:
+      - nextcloud_html:/var/www/html
+      - nextcloud_data:/var/www/html/data
+      - ./docker/nextcloud/custom-php.ini:/usr/local/etc/php/conf.d/zz-securecloud.ini:ro
+    ports:
+      # Local dev: access Nextcloud at http://localhost:8080
+      # Port 80 is left free for Caddy (--with-proxy / proxy profile).
+      - "${NEXTCLOUD_PORT:-8080}:80"
+    networks:
+      - securecloud-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  securecloud-bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+    container_name: securecloud-bot
+    restart: unless-stopped
+    depends_on:
+      nextcloud:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      NEXTCLOUD_BASE_URL: http://nextcloud
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      NODE_ENV: production
+    volumes:
+      - bot_tmp:/app/tmp
+    networks:
+      - securecloud-net
+    ports:
+      - "${BOT_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "dist/utils/healthcheck.js"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: securecloud-caddy
+    restart: unless-stopped
+    depends_on:
+      - nextcloud
+      - securecloud-bot
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - securecloud-net
+    profiles:
+      - proxy
