@@ -1,14 +1,32 @@
-import express, { Express, Request, Response } from "express";
+import express, { Express, Request, Response, NextFunction } from "express";
 import { rawBodySaver, verifySignature, rateLimit } from "./middleware/security";
 import { verifyWebhook, receiveWebhook } from "./controllers/webhookController";
 import { checkNextcloudHealth } from "./integrations/nextcloud";
 import { logger } from "./utils/logger";
+import webApiRouter from "./routes/webApi";
 
 export function buildApp(): Express {
   const app = express();
 
+  // CORS — allow the Vite dev server (and production build) to talk to this API.
+  // VITE_FRONTEND_ORIGIN can be set to the Windows dev server origin e.g. http://192.168.1.15:5173
+  const allowedOrigins = (process.env.VITE_FRONTEND_ORIGIN || "").split(",").map(s => s.trim()).filter(Boolean);
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = req.headers.origin || "";
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin) || allowedOrigins.includes("*")) {
+      res.setHeader("Access-Control-Allow-Origin", origin || "*");
+    }
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+    if (req.method === "OPTIONS") { res.sendStatus(204); return; }
+    next();
+  });
+
   app.use(express.json({ limit: "5mb", verify: rawBodySaver }));
   app.use(rateLimit);
+
+  // Web frontend API — all Nextcloud credentials remain server-side.
+  app.use("/api/web", webApiRouter);
 
   // Meta's GET verification handshake — no signature to check yet.
   app.get("/webhook", verifyWebhook);
