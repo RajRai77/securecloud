@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../AppContext';
+import { login } from '../api';
 
 interface Props {
   onLogin: () => void;
@@ -16,7 +17,6 @@ export default function LoginPage({ onLogin }: Props) {
     setError('');
     setLoading(true);
     try {
-      const { login } = await import('../api');
       await login(password);
       addToast('Welcome to SecureCloud', 'success');
       onLogin();

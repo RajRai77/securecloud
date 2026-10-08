@@ -9,6 +9,7 @@ import multer from "multer";
 import * as nextcloud from "../integrations/nextcloud";
 import { sanitizeFilename } from "../utils/sanitize";
 import { logger } from "../utils/logger";
+import { logActivity, getActivity } from "../utils/activityLog";
 import { config } from "../config";
 
 const router = Router();
@@ -48,6 +49,7 @@ router.post("/login", (req: Request, res: Response) => {
     res.status(401).json({ error: "Invalid credentials" });
     return;
   }
+  logActivity("LOGIN", "user", "success");
   res.json({ token: WEB_TOKEN });
 });
 
@@ -101,8 +103,10 @@ router.post(
     try {
       const safeName = sanitizeFilename(req.file.originalname);
       const entry = await nextcloud.uploadFile(req.file.buffer, safeName);
+      logActivity("UPLOAD", safeName, "success");
       res.json({ file: entry });
     } catch (err: any) {
+      logActivity("UPLOAD", req.file.originalname, "failure");
       logger.error({ err }, "webApi: upload failed");
       res.status(500).json({ error: err.message || "Upload failed" });
     }
@@ -117,7 +121,9 @@ router.get("/files/download/:filename", requireAuth, async (req: Request, res: R
     res.setHeader("Content-Disposition", `attachment; filename="${safeName}"`);
     res.setHeader("Content-Type", "application/octet-stream");
     res.send(buffer);
+    logActivity("DOWNLOAD", safeName, "success");
   } catch (err) {
+    logActivity("DOWNLOAD", req.params.filename, "failure");
     logger.error({ err }, "webApi: download failed");
     res.status(500).json({ error: "Download failed" });
   }
@@ -128,8 +134,10 @@ router.delete("/files/:filename", requireAuth, async (req: Request, res: Respons
     const safeName = sanitizeFilename(req.params.filename);
     const entry = { filename: safeName, path: `/SecureCloud/${safeName}`, size: 0, isFolder: false };
     await nextcloud.deleteFile(entry);
+    logActivity("DELETE", safeName, "success");
     res.json({ success: true });
   } catch (err) {
+    logActivity("DELETE", req.params.filename, "failure");
     logger.error({ err }, "webApi: delete failed");
     res.status(500).json({ error: "Delete failed" });
   }
@@ -161,8 +169,10 @@ router.post("/shares", requireAuth, async (req: Request, res: Response) => {
     (config.nextcloud as any).shareExpiryDays = originalDays;
     (config.nextcloud as any).sharePasswordDefaultEnabled = originalPwd;
 
+    logActivity("CREATE_SHARE", safeName, "success");
     res.json({ share: result });
   } catch (err: any) {
+    logActivity("CREATE_SHARE", req.body.filename, "failure");
     logger.error({ err }, "webApi: createShareLink failed");
     res.status(500).json({ error: err.message || "Share failed" });
   }
@@ -206,8 +216,10 @@ router.delete("/shares/:shareId", requireAuth, async (req: Request, res: Respons
       `${ncBase}/ocs/v2.php/apps/files_sharing/api/v1/shares/${shareId}?format=json`,
       { auth, headers: { "OCS-APIRequest": "true" }, timeout: 10000 }
     );
+    logActivity("DELETE_SHARE", `Share ID ${shareId}`, "success");
     res.json({ success: true });
   } catch (err) {
+    logActivity("DELETE_SHARE", `Share ID ${req.params.shareId}`, "failure");
     logger.error({ err }, "webApi: deleteShare failed");
     res.status(500).json({ error: "Failed to delete share" });
   }
@@ -221,6 +233,17 @@ router.get("/storage", requireAuth, async (_req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, "webApi: getStorage failed");
     res.status(500).json({ error: "Failed to get storage info" });
+  }
+});
+
+// ─── Activity ─────────────────────────────────────────────────────────────────
+router.get("/activity", requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const activity = getActivity();
+    res.json({ activity });
+  } catch (err) {
+    logger.error({ err }, "webApi: getActivity failed");
+    res.status(500).json({ error: "Failed to get activity log" });
   }
 });
 

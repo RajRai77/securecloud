@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../AppContext';
+import { createShare } from '../api';
 import type { FileEntry, ShareResult } from '../api';
 
 interface Props {
@@ -21,7 +22,6 @@ export default function ShareModal({ file, onClose }: Props) {
   async function handleCreate() {
     setLoading(true);
     try {
-      const { createShare } = await import('../api');
       const share = await createShare(file.filename, {
         password: enablePassword,
         expiryDays,

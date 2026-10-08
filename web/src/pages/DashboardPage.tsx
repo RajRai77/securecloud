@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../AppContext';
+import { listFiles, fetchStorage, listShares } from '../api';
 
 interface Props {
   onNav: (page: string) => void;
@@ -30,7 +31,6 @@ export default function DashboardPage({ onNav }: Props) {
     setStorageLoading(true);
     setFilesLoading(true);
     try {
-      const { listFiles, fetchStorage, listShares } = await import('../api');
       const [files, storage, shares] = await Promise.allSettled([
         listFiles(),
         fetchStorage(),

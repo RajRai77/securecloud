@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../AppContext';
+import { fetchStorage } from '../api';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -22,7 +23,6 @@ export default function StoragePage() {
     if (!isOnline) return;
     setLoading(true);
     try {
-      const { fetchStorage } = await import('../api');
       setStorageInfo(await fetchStorage());
     } catch (err: any) {
       addToast(err.message || 'Failed to load storage info', 'error');

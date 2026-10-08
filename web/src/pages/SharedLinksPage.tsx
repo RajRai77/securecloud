@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../AppContext';
+import { listShares, deleteShare } from '../api';
 import type { NcShare } from '../api';
 
 function formatDate(ts: number | null | undefined): string {
@@ -29,7 +30,6 @@ export default function SharedLinksPage() {
     if (!isOnline) return;
     setLoading(true);
     try {
-      const { listShares } = await import('../api');
       setShares(await listShares());
     } catch (err: any) {
       addToast(err.message || 'Failed to load shares', 'error');
@@ -42,7 +42,6 @@ export default function SharedLinksPage() {
 
   async function handleDelete(share: NcShare) {
     try {
-      const { deleteShare } = await import('../api');
       await deleteShare(share.id);
       addToast('Share link disabled', 'success');
       setShares((s) => s.filter((x) => x.id !== share.id));

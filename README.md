@@ -1,30 +1,29 @@
 # SecureCloud
 
-**Secure File Sharing and Personal Cloud Storage Using Nextcloud with WhatsApp-Based File Management**
+**Secure File Sharing and Personal Cloud Storage Using Nextcloud with a Custom Web UI and WhatsApp Bot**
 
-A self-hosted personal cloud storage platform. [Nextcloud](https://nextcloud.com/) provides
-the storage, sharing, and web dashboard. A custom WhatsApp bot (Node.js/TypeScript) gives you
-a conversational interface to upload, list, download, share, and delete your files from
-WhatsApp — while the same files remain fully accessible through the normal Nextcloud web UI.
+A self-hosted personal cloud storage platform designed to run on a repurposed laptop or PC.
+It uses [Nextcloud](https://nextcloud.com/) as the robust storage backend. 
+Users access their files through a beautiful, custom **React SPA Web Dashboard**, or via a conversational **WhatsApp bot**. Both interfaces communicate through a custom Node.js/TypeScript backend API, ensuring all files remain safely on your own hardware.
 
 ## Architecture
 
 ```
-                    INTERNET
-                       |
-                 WhatsApp User
-                       |
-                       v
-              WhatsApp Cloud API
-                       |
-                       v
-             +-------------------+
-             |  SecureCloud Bot  |
-             | Node.js/TypeScript|
-             +---------+---------+
-                       |
-                       | HTTPS / WebDAV / OCS API
-                       v
+                    INTERNET (or Local Network)
+                      |
+        +-------------+-------------+
+        |                           |
+  Web Browser (React UI)       WhatsApp User
+        |                           |
+        |                  WhatsApp Cloud API
+        v                           v
+  +---------------------------------------+
+  |            SecureCloud Bot            |
+  | (Node.js/TypeScript REST API + Webhook)|
+  +-------------------+-------------------+
+                      |
+                      | HTTPS / WebDAV / OCS API
+                      v
              +-------------------+
              |    Nextcloud      |
              +----+---------+----+
@@ -58,26 +57,27 @@ full walkthrough, including WhatsApp Cloud API setup.
 ```
 securecloud/
 ├── docker-compose.yml       # Orchestrates mariadb, redis, nextcloud, bot, reverse proxy
-├── .env.example              # All configuration/secrets, as placeholders
-├── bot/                       # WhatsApp <-> Nextcloud integration bot (Node.js/TS)
-├── docker/                    # Per-service Docker configuration (php.ini, Caddyfile)
-├── scripts/                   # setup / start / stop / backup / health-check / reset-dev
-├── docs/                      # Architecture, installation, security, viva docs
-└── tests/integration/         # Manual integration-test checklist
+├── .env.example             # All configuration/secrets, as placeholders
+├── bot/                     # SecureCloud backend API (Node.js/TS) + WhatsApp bot
+├── web/                     # SecureCloud frontend (React, Vite, TypeScript)
+├── docker/                  # Per-service Docker configuration (php.ini, Caddyfile)
+├── scripts/                 # setup / start / stop / status / health / backup
+├── docs/                    # Architecture, deployment, security, viva docs
+└── tests/integration/       # Manual integration-test checklist
 ```
 
 ## What's custom vs. what's Nextcloud
 
-Nextcloud (used as-is, no core modification) provides: web dashboard, file storage, upload,
-download, folders, sharing, password-protected/expiring share links, and authentication.
+Nextcloud (used as a headless engine) provides: file storage, upload, download, folders, sharing, password-protected/expiring share links, and base authentication.
 
-The custom code in `bot/` provides: the WhatsApp conversational interface, WebDAV/OCS API
-integration, session/state handling, command validation, upload/download bridging between
-WhatsApp media and Nextcloud, share-link generation, and storage reporting.
+The custom code provides:
+- `bot/`: The REST API layer, WebDAV/OCS API bridging, session handling, action logging, and the WhatsApp conversational interface.
+- `web/`: The custom-designed React dashboard providing a premium UI for file management, system health monitoring, and activity logs.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Deployment (Physical Laptop)](docs/deployment.md)
 - [Installation](docs/installation.md)
 - [Security](docs/security.md)
 - [WhatsApp Cloud API setup](docs/whatsapp-setup.md)
