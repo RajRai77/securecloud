@@ -56,7 +56,6 @@ interface SecuritySettings {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SESSION_ID_KEY = 'sc_session_id';
-const SESSIONS_STORE_KEY = 'sc_browser_sessions';
 const SETTINGS_KEY = 'sc_security_settings';
 const DEMO_OFFLINE_KEY = 'sc_demo_offline';
 const HEARTBEAT_MS = 4000;
@@ -98,17 +97,6 @@ function getOrCreateSessionId(): string {
     sessionStorage.setItem(SESSION_ID_KEY, id);
   }
   return id;
-}
-
-function loadSessions(): BrowserSession[] {
-  try {
-    const raw = localStorage.getItem(SESSIONS_STORE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function saveSessions(sessions: BrowserSession[]): void {
-  localStorage.setItem(SESSIONS_STORE_KEY, JSON.stringify(sessions));
 }
 
 function loadSettings(): SecuritySettings {
@@ -163,24 +151,24 @@ function formatExpiry(exp: string | null): string {
 type Tab = 'overview' | 'sessions' | 'activity' | 'audit' | 'alerts' | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'overview',  label: 'Overview'  },
-  { id: 'sessions',  label: 'Sessions'  },
-  { id: 'activity',  label: 'Activity'  },
-  { id: 'audit',     label: 'Security Audit' },
-  { id: 'alerts',    label: 'Alerts'    },
-  { id: 'settings',  label: 'Settings'  },
+  { id: 'overview', label: 'Overview' },
+  { id: 'sessions', label: 'Sessions' },
+  { id: 'activity', label: 'Activity' },
+  { id: 'audit', label: 'Security Audit' },
+  { id: 'alerts', label: 'Alerts' },
+  { id: 'settings', label: 'Settings' },
 ];
 
 // ─── Mini components ──────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: 'pass' | 'warn' | 'unknown' | 'fail' | 'online' | 'offline' }) {
   const map = {
-    pass:    { label: 'PASS',    cls: 'sec-badge sec-badge-pass'    },
-    online:  { label: 'ONLINE',  cls: 'sec-badge sec-badge-pass'    },
-    warn:    { label: 'WARN',    cls: 'sec-badge sec-badge-warn'    },
+    pass: { label: 'PASS', cls: 'sec-badge sec-badge-pass' },
+    online: { label: 'ONLINE', cls: 'sec-badge sec-badge-pass' },
+    warn: { label: 'WARN', cls: 'sec-badge sec-badge-warn' },
     unknown: { label: 'UNKNOWN', cls: 'sec-badge sec-badge-unknown' },
-    fail:    { label: 'FAIL',    cls: 'sec-badge sec-badge-fail'    },
-    offline: { label: 'OFFLINE', cls: 'sec-badge sec-badge-fail'    },
+    fail: { label: 'FAIL', cls: 'sec-badge sec-badge-fail' },
+    offline: { label: 'OFFLINE', cls: 'sec-badge sec-badge-fail' },
   };
   const m = map[status] || map.unknown;
   return <span className={m.cls}>{m.label}</span>;
@@ -188,9 +176,9 @@ function StatusBadge({ status }: { status: 'pass' | 'warn' | 'unknown' | 'fail' 
 
 function AlertBadge({ level }: { level: 'high' | 'medium' | 'info' }) {
   const map = {
-    high:   'sec-alert-badge sec-alert-high',
+    high: 'sec-alert-badge sec-alert-high',
     medium: 'sec-alert-badge sec-alert-medium',
-    info:   'sec-alert-badge sec-alert-info',
+    info: 'sec-alert-badge sec-alert-info',
   };
   return <span className={map[level]}>{level.toUpperCase()}</span>;
 }
@@ -225,7 +213,7 @@ function DemoBanner({ onRestore }: { onRestore: () => void }) {
         <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
       </svg>
       <div>
-        <div style={{ fontWeight: 700, fontSize: 13 }}>⚠ DEMO SIMULATION — SecureCloud is temporarily unavailable</div>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>⚠  — SecureCloud is temporarily unavailable</div>
         <div style={{ fontSize: 12, opacity: 0.85, marginTop: 2 }}>
           Your actual Kali Linux server and Nextcloud are still running. This is a UI-only simulation.
         </div>
@@ -264,7 +252,7 @@ export default function SecurityPage() {
     setDemoOffline(true);
     setDemoOfflineState(true);
     setShowShutdownConfirm(false);
-    addToast('Demo simulation: SecureCloud appears offline', 'info');
+    addToast(': SecureCloud appears offline', 'info');
   }, [addToast]);
 
   const disableDemoOffline = useCallback(() => {
@@ -273,108 +261,93 @@ export default function SecurityPage() {
     addToast('SecureCloud restored to online state', 'success');
   }, [addToast]);
 
-  // ── Sessions ──────────────────────────────────────────────────────────────────
+  // ── Sessions — server-side (works across all browsers & origins) ─────────────
   const mySessionId = useRef(getOrCreateSessionId());
-  const channelRef = useRef<BroadcastChannel | null>(null);
+  const myStartedAt = useRef(
+    sessionStorage.getItem('sc_session_started') || (() => {
+      const now = new Date().toISOString();
+      sessionStorage.setItem('sc_session_started', now);
+      return now;
+    })()
+  );
   const [sessions, setSessions] = useState<BrowserSession[]>([]);
 
-  const announceSelf = useCallback(() => {
-    const now = new Date().toISOString();
-    const me: BrowserSession = {
-      id: mySessionId.current,
-      browser: detectBrowser(),
-      os: detectOS(),
-      startedAt: sessionStorage.getItem('sc_session_started') || now,
-      lastSeen: now,
-      isCurrent: true,
-    };
-    if (!sessionStorage.getItem('sc_session_started')) {
-      sessionStorage.setItem('sc_session_started', now);
+  // Build the API base (same origin as the page, via Vite proxy in dev)
+  const BASE = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_BASE_URL || '');
+  const getToken = () => sessionStorage.getItem('sc_token') || '';
+
+  const sendHeartbeat = useCallback(async () => {
+    try {
+      await fetch(`${BASE}/api/web/security/sessions/heartbeat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${getToken()}`,
+        },
+        body: JSON.stringify({
+          id: mySessionId.current,
+          browser: detectBrowser(),
+          os: detectOS(),
+          startedAt: myStartedAt.current,
+        }),
+      });
+    } catch { /* server may be offline */ }
+  }, [BASE]);
+
+  const fetchSessions = useCallback(async () => {
+    try {
+      const res = await fetch(`${BASE}/api/web/security/sessions`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list: BrowserSession[] = (data.sessions || []).map((s: any) => ({
+        ...s,
+        isCurrent: s.id === mySessionId.current,
+      }));
+      setSessions(list);
+    } catch { /* server offline */ }
+  }, [BASE]);
+
+  const revokeSession = useCallback(async (sessionId: string) => {
+    try {
+      await fetch(`${BASE}/api/web/security/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      await fetchSessions();
+      addToast('Session revoked', 'success');
+    } catch {
+      addToast('Failed to revoke session', 'error');
     }
+  }, [BASE, fetchSessions, addToast]);
 
-    // Update sessions store
-    const all = loadSessions().filter(s => s.id !== me.id);
-    all.push(me);
-    saveSessions(all);
-
-    // Broadcast to other tabs
-    channelRef.current?.postMessage({ type: 'heartbeat', session: { ...me, isCurrent: false } });
-
-    // Refresh local state
-    setSessions(
-      loadSessions().map(s => ({ ...s, isCurrent: s.id === mySessionId.current }))
-    );
-  }, []);
-
-  // Purge stale sessions (older than timeout setting)
-  const purgeStaleSessions = useCallback(() => {
-    const timeoutMs = settings.sessionTimeoutMins * 60 * 1000;
-    const cutoff = Date.now() - timeoutMs;
-    const alive = loadSessions().filter(s => new Date(s.lastSeen).getTime() > cutoff);
-    saveSessions(alive);
-    setSessions(alive.map(s => ({ ...s, isCurrent: s.id === mySessionId.current })));
-  }, [settings.sessionTimeoutMins]);
+  const revokeAllSessions = useCallback(async () => {
+    try {
+      await fetch(`${BASE}/api/web/security/sessions/all`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      setSessions([]);
+      addToast('All sessions revoked', 'success');
+    } catch {
+      addToast('Failed to revoke sessions', 'error');
+    }
+  }, [BASE, addToast]);
 
   useEffect(() => {
-    // Create BroadcastChannel for cross-tab communication
-    try {
-      channelRef.current = new BroadcastChannel('sc_sessions');
-      channelRef.current.onmessage = (e) => {
-        if (e.data?.type === 'heartbeat') {
-          const all = loadSessions().filter(s => s.id !== e.data.session.id);
-          all.push(e.data.session);
-          saveSessions(all);
-          setSessions(all.map(s => ({ ...s, isCurrent: s.id === mySessionId.current })));
-        }
-        if (e.data?.type === 'revoke') {
-          if (e.data.sessionId === mySessionId.current) {
-            // This session was revoked
-            addToast('Your session was revoked by an admin action', 'error');
-          }
-          const all = loadSessions().filter(s => s.id !== e.data.sessionId);
-          saveSessions(all);
-          setSessions(all.map(s => ({ ...s, isCurrent: s.id === mySessionId.current })));
-        }
-        if (e.data?.type === 'revoke_all') {
-          saveSessions([]);
-          setSessions([]);
-        }
-      };
-    } catch {
-      // BroadcastChannel not supported (very old browser)
-    }
+    // Immediately send heartbeat + fetch sessions
+    sendHeartbeat().then(fetchSessions);
 
-    announceSelf();
-    const hbInterval = setInterval(() => {
-      announceSelf();
-      purgeStaleSessions();
+    // Keep heartbeating + polling while tab is open
+    const interval = setInterval(async () => {
+      await sendHeartbeat();
+      await fetchSessions();
     }, HEARTBEAT_MS);
 
-    if (settings.newSessionAlerts) {
-      addToast('Security System: session tracking active', 'info');
-    }
+    return () => clearInterval(interval);
+  }, [sendHeartbeat, fetchSessions]);
 
-    return () => {
-      clearInterval(hbInterval);
-      channelRef.current?.close();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const revokeSession = useCallback((sessionId: string) => {
-    channelRef.current?.postMessage({ type: 'revoke', sessionId });
-    const all = loadSessions().filter(s => s.id !== sessionId);
-    saveSessions(all);
-    setSessions(all.map(s => ({ ...s, isCurrent: s.id === mySessionId.current })));
-    addToast('Session revoked', 'success');
-  }, [addToast]);
-
-  const revokeAllSessions = useCallback(() => {
-    channelRef.current?.postMessage({ type: 'revoke_all' });
-    saveSessions([]);
-    setSessions([]);
-    addToast('All sessions revoked', 'success');
-  }, [addToast]);
 
   // ── Activity ──────────────────────────────────────────────────────────────────
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
@@ -578,8 +551,8 @@ export default function SecurityPage() {
 
   const overallStatus: 'secure' | 'attention' | 'offline' =
     !isOnline ? 'offline' :
-    score >= 85 ? 'secure' :
-    'attention';
+      score >= 85 ? 'secure' :
+        'attention';
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -650,12 +623,12 @@ export default function SecurityPage() {
 
       {/* ── Tab content ── */}
       <div style={{ marginTop: 20 }}>
-        {tab === 'overview'  && <OverviewTab score={score} isOnline={isOnline} healthLoading={healthLoading} health={health} sessions={sessions} shares={shares} alerts={alerts} settings={settings} updateSettings={updateSettings} onShowSessions={() => setTab('sessions')} onShowShares={() => setTab('audit')} onShowAlerts={() => setTab('alerts')} />}
-        {tab === 'sessions'  && <SessionsTab sessions={sessions} onRevoke={revokeSession} onRevokeAll={revokeAllSessions} />}
-        {tab === 'activity'  && <ActivityTab activity={activity} loading={activityLoading} onRefresh={loadActivity} isOnline={isOnline} />}
-        {tab === 'audit'     && <AuditTab checks={auditChecks} shares={shares} sharesLoading={sharesLoading} isOnline={isOnline} onDisableShare={handleDisableShare} />}
-        {tab === 'alerts'    && <AlertsTab alerts={alerts} />}
-        {tab === 'settings'  && <SettingsTab settings={settings} updateSettings={updateSettings} onShowShutdown={() => setShowShutdownConfirm(true)} demoOffline={demoOffline} onRestoreDemo={disableDemoOffline} />}
+        {tab === 'overview' && <OverviewTab score={score} isOnline={isOnline} healthLoading={healthLoading} health={health} sessions={sessions} shares={shares} alerts={alerts} settings={settings} updateSettings={updateSettings} onShowSessions={() => setTab('sessions')} onShowShares={() => setTab('audit')} onShowAlerts={() => setTab('alerts')} />}
+        {tab === 'sessions' && <SessionsTab sessions={sessions} onRevoke={revokeSession} onRevokeAll={revokeAllSessions} />}
+        {tab === 'activity' && <ActivityTab activity={activity} loading={activityLoading} onRefresh={loadActivity} isOnline={isOnline} />}
+        {tab === 'audit' && <AuditTab checks={auditChecks} shares={shares} sharesLoading={sharesLoading} isOnline={isOnline} onDisableShare={handleDisableShare} />}
+        {tab === 'alerts' && <AlertsTab alerts={alerts} />}
+        {tab === 'settings' && <SettingsTab settings={settings} updateSettings={updateSettings} onShowShutdown={() => setShowShutdownConfirm(true)} demoOffline={demoOffline} onRestoreDemo={disableDemoOffline} />}
       </div>
 
       {/* ── Demo shutdown confirm modal ── */}
@@ -750,10 +723,10 @@ function OverviewTab({
           <div className="card-title">Service Health</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
             {[
-              { name: 'SecureCloud API',   status: isOnline ? 'pass' as const : 'fail' as const,    detail: 'Web API layer'          },
-              { name: 'Nextcloud',         status: health?.nextcloud ? 'pass' as const : isOnline ? 'warn' as const : 'unknown' as const, detail: 'File storage engine' },
-              { name: 'MariaDB',           status: 'pass' as const,    detail: 'Internal — not exposed' },
-              { name: 'Redis',             status: 'pass' as const,    detail: 'Internal — not exposed' },
+              { name: 'SecureCloud API', status: isOnline ? 'pass' as const : 'fail' as const, detail: 'Web API layer' },
+              { name: 'Nextcloud', status: health?.nextcloud ? 'pass' as const : isOnline ? 'warn' as const : 'unknown' as const, detail: 'File storage engine' },
+              { name: 'MariaDB', status: 'pass' as const, detail: 'Internal — not exposed' },
+              { name: 'Redis', status: 'pass' as const, detail: 'Internal — not exposed' },
             ].map(svc => (
               <div key={svc.name} className="sec-service-row">
                 <div>
@@ -778,8 +751,8 @@ function OverviewTab({
             </div>
           </div>
           {[
-            { label: 'API Origin',    value: window.location.origin },
-            { label: 'Protocol',      value: window.location.protocol === 'https:' ? 'HTTPS (Encrypted)' : 'HTTP (Unencrypted)' },
+            { label: 'API Origin', value: window.location.origin },
+            { label: 'Protocol', value: window.location.protocol === 'https:' ? 'HTTPS (Encrypted)' : 'HTTP (Unencrypted)' },
             { label: 'Client Browser', value: `${detectBrowser()} on ${detectOS()}` },
           ].map(row => (
             <div key={row.label} className="sec-service-row">
@@ -870,8 +843,9 @@ function SessionsTab({ sessions, onRevoke, onRevokeAll }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="card card-sm" style={{ background: 'var(--color-accent-bg)', border: '1px solid #bfdbfe' }}>
         <div style={{ fontSize: 12.5, color: 'var(--color-accent)', lineHeight: 1.6 }}>
-          Sessions are tracked using BroadcastChannel and localStorage. Each browser tab/window registers
-          a heartbeat every 4 seconds. Opening SecureCloud in another tab will add a new session here.
+          Sessions are tracked server-side. Every open tab (any browser, any origin) sends a heartbeat
+          to the SecureCloud API every 4 seconds. A session is removed automatically if no heartbeat
+          is received within 12 seconds (tab closed or browser quit).
         </div>
       </div>
 
@@ -934,10 +908,11 @@ function SessionsTab({ sessions, onRevoke, onRevokeAll }: {
 
       <div className="card card-sm" style={{ background: 'var(--color-surface-2)' }}>
         <div style={{ fontSize: 12.5, color: 'var(--color-text-3)', lineHeight: 1.6 }}>
-          <strong style={{ color: 'var(--color-text-2)' }}>Technical note:</strong> Session revocation
-          sends a BroadcastChannel message to other tabs in the same browser. Cross-device revocation
-          requires a server-side session store (not implemented). The session token itself must be
-          manually invalidated via logout.
+          <strong style={{ color: 'var(--color-text-2)' }}>How it works:</strong> Each tab sends
+          <code style={{ fontSize: 11, background: 'var(--color-border)', padding: '1px 4px', borderRadius: 3 }}> POST /api/web/security/sessions/heartbeat</code> every 4 seconds.
+          The server stores sessions in memory. Revoke sends
+          <code style={{ fontSize: 11, background: 'var(--color-border)', padding: '1px 4px', borderRadius: 3 }}> DELETE /api/web/security/sessions/:id</code>.
+          Sessions expire automatically after 12 seconds without a heartbeat.
         </div>
       </div>
     </div>
@@ -947,12 +922,12 @@ function SessionsTab({ sessions, onRevoke, onRevokeAll }: {
 // ─── Tab: Activity ────────────────────────────────────────────────────────────
 
 const ACTION_META: Record<string, { label: string; color: string; icon: string }> = {
-  LOGIN:        { label: 'Login',          color: 'var(--color-accent)',   icon: '🔑' },
-  UPLOAD:       { label: 'Upload',         color: 'var(--color-success)',  icon: '↑' },
-  DOWNLOAD:     { label: 'Download',       color: '#7c3aed',               icon: '↓' },
-  DELETE:       { label: 'Delete',         color: 'var(--color-error)',    icon: '🗑' },
-  CREATE_SHARE: { label: 'Share Created',  color: '#0891b2',               icon: '🔗' },
-  DELETE_SHARE: { label: 'Share Removed',  color: 'var(--color-warning)', icon: '✂' },
+  LOGIN: { label: 'Login', color: 'var(--color-accent)', icon: '🔑' },
+  UPLOAD: { label: 'Upload', color: 'var(--color-success)', icon: '↑' },
+  DOWNLOAD: { label: 'Download', color: '#7c3aed', icon: '↓' },
+  DELETE: { label: 'Delete', color: 'var(--color-error)', icon: '🗑' },
+  CREATE_SHARE: { label: 'Share Created', color: '#0891b2', icon: '🔗' },
+  DELETE_SHARE: { label: 'Share Removed', color: 'var(--color-warning)', icon: '✂' },
 };
 
 function ActivityTab({ activity, loading, onRefresh, isOnline }: {
@@ -1024,9 +999,9 @@ function AuditTab({ checks, shares, sharesLoading, isOnline, onDisableShare }: {
   isOnline: boolean;
   onDisableShare: (s: NcShare) => void;
 }) {
-  const passCount  = checks.filter(c => c.status === 'pass').length;
-  const warnCount  = checks.filter(c => c.status === 'warn').length;
-  const failCount  = checks.filter(c => c.status === 'fail').length;
+  const passCount = checks.filter(c => c.status === 'pass').length;
+  const warnCount = checks.filter(c => c.status === 'warn').length;
+  const failCount = checks.filter(c => c.status === 'fail').length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1293,7 +1268,7 @@ function SettingsTab({ settings, updateSettings, onShowShutdown, demoOffline, on
       <div className="card" style={{ borderColor: '#fde68a' }}>
         <div style={{ display: 'flex', align: 'center', gap: 10, marginBottom: 12 }}>
           <div className="card-title" style={{ margin: 0 }}>Server Shutdown</div>
-          <span className="badge badge-yellow" style={{ marginLeft: 8, alignSelf: 'center' }}>DEMO SIMULATION</span>
+          <span className="badge badge-yellow" style={{ marginLeft: 8, alignSelf: 'center' }}></span>
         </div>
         <div style={{ fontSize: 13, color: 'var(--color-text-2)', lineHeight: 1.6, marginBottom: 16 }}>
           <strong>This does NOT shut down your Kali Linux server.</strong> It puts the SecureCloud
@@ -1329,7 +1304,7 @@ function DemoShutdownModal({ onConfirm, onCancel }: { onConfirm: () => void; onC
         <div className="modal-header">
           <div>
             <div className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 20 }}>⚠</span> Demo Simulation Confirmation
+              <span style={{ fontSize: 20 }}>⚠</span>  Confirmation
             </div>
             <div style={{ fontSize: 12, color: 'var(--color-warning)', marginTop: 4, fontWeight: 600 }}>
               DEMO ONLY — Your real server will NOT be affected
@@ -1360,7 +1335,7 @@ function DemoShutdownModal({ onConfirm, onCancel }: { onConfirm: () => void; onC
         <div className="modal-footer">
           <button className="btn btn-secondary btn-sm" onClick={onCancel}>Cancel</button>
           <button id="sec-confirm-shutdown" className="btn btn-danger btn-sm" onClick={onConfirm}>
-            Proceed with Demo Simulation
+            Proceed with
           </button>
         </div>
       </div>
