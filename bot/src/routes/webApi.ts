@@ -10,6 +10,7 @@ import * as nextcloud from "../integrations/nextcloud";
 import { sanitizeFilename } from "../utils/sanitize";
 import { logger } from "../utils/logger";
 import { logActivity, getActivity } from "../utils/activityLog";
+import { upsertSession, getSessions, revokeSession, revokeAllSessions } from "../utils/sessionRegistry";
 import { config } from "../config";
 
 const router = Router();
@@ -245,6 +246,39 @@ router.get("/activity", requireAuth, async (_req: Request, res: Response) => {
     logger.error({ err }, "webApi: getActivity failed");
     res.status(500).json({ error: "Failed to get activity log" });
   }
+});
+
+// ─── Security — Session Registry ─────────────────────────────────────────────
+// POST /security/sessions/heartbeat  — register or refresh a browser session
+router.post("/security/sessions/heartbeat", requireAuth, (req: Request, res: Response) => {
+  const { id, browser, os, startedAt } = req.body as {
+    id?: string; browser?: string; os?: string; startedAt?: string;
+  };
+  if (!id) { res.status(400).json({ error: "id required" }); return; }
+  const session = upsertSession({
+    id,
+    browser: browser || "Unknown Browser",
+    os: os || "Unknown OS",
+    startedAt: startedAt || new Date().toISOString(),
+  });
+  res.json({ session });
+});
+
+// GET /security/sessions  — list all active sessions
+router.get("/security/sessions", requireAuth, (_req: Request, res: Response) => {
+  res.json({ sessions: getSessions() });
+});
+
+// DELETE /security/sessions/all  — revoke every active session
+router.delete("/security/sessions/all", requireAuth, (_req: Request, res: Response) => {
+  revokeAllSessions();
+  res.json({ success: true });
+});
+
+// DELETE /security/sessions/:id  — revoke one session by ID
+router.delete("/security/sessions/:id", requireAuth, (req: Request, res: Response) => {
+  const removed = revokeSession(req.params.id);
+  res.json({ success: removed });
 });
 
 export default router;
